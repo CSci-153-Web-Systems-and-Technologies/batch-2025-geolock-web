@@ -114,7 +114,7 @@ export function LoginForm() {
           <Button
             type="submit"
             disabled={loading}
-            className="w-full h-[49.5px] rounded-[10px] bg-[#004eec] hover:bg-[#0040c4] text-sm font-medium"
+            className="w-full h-[49.5px] rounded-[10px] bg-[#004eec] hover:bg-[#0040c4] text-sm text-white font-medium"
           >
             {loading && (
               <svg
