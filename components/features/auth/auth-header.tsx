@@ -7,13 +7,13 @@ interface AuthHeaderProps {
 
 export function AuthHeader({ 
   title = "Organizer Portal",
-  subtitle = "Please enter your details" 
+  subtitle = "Please enter account credentials" 
 }: AuthHeaderProps) {
   return (
     <div className="flex flex-col items-center text-center">
       {/* Logo */}
       <Image
-        src="/images/logo.svg"
+        src="/images/auth-logo.svg"
         alt="Geolock Logo"
         width={78}
         height={72}
