@@ -13,6 +13,9 @@ export const metadata: Metadata = {
   title: "Geolock",
   description:
     "A Geofenced Attendance designed to automate attendance recording through QR codes and geolocation verification",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 const inter = Inter({
