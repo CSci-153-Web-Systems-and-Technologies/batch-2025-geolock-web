@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-
+import NextTopLoader from "nextjs-toploader";
+import { Toaster } from "sonner";
 
 const defaultUrl = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
@@ -27,7 +28,26 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} antialiased min-h-screen bg-app-gradient`}>
+      <head>
+      </head>
+      <body
+        className={`${inter.className} antialiased min-h-screen bg-app-gradient`}
+      >
+        {/* 2. Loader Component */}
+        <NextTopLoader
+          color="#004eec"
+          initialPosition={0.08}
+          crawlSpeed={200}
+          height={3}
+          crawl={true}
+          showSpinner={false}
+          easing="ease"
+          speed={200}
+          shadow="0 0 10px #004eec,0 0 5px #004eec"
+        />
+
+        <Toaster position="top-center" richColors closeButton />
+        
         {children}
       </body>
     </html>
