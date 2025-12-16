@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   ArrowLeft, QrCode, Download, Users, MapPin, Calendar, 
-  Clock, Copy, LogIn, LogOut, RefreshCw, Power // ADDED RefreshCw & Power
+  Clock, Copy, LogIn, LogOut, RefreshCw, Power 
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,7 +39,7 @@ interface Attendee {
   check_in_time: string;
   check_out_time?: string;
   type: 'check-in' | 'check-out';
-  year_level: string; // Add this
+  year_level: string;
 }
 
 interface EventDetailsProps {
@@ -53,10 +53,37 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
   const [attendees, setAttendees] = useState<Attendee[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const totalEntries = attendees.length;
-  const uniqueCheckIns = attendees.filter(a => a.type === 'check-in').length;
-  const uniqueCheckOuts = attendees.filter(a => a.type === 'check-out').length;
-  const currentlyPresent = uniqueCheckIns - uniqueCheckOuts;
+  // --- METRIC CALCULATIONS (Updated Logic) ---
+  const stats = useMemo(() => {
+    // 1. Total Entries (Raw Count)
+    const totalEntries = attendees.length;
+
+    // Group logs by Email to identify unique students
+    const studentMap = attendees.reduce((acc, curr) => {
+      if (!acc[curr.email]) acc[curr.email] = new Set();
+      acc[curr.email].add(curr.type);
+      return acc;
+    }, {} as Record<string, Set<string>>);
+
+    // 2. Unique Attendees (Count of unique emails)
+    const uniqueAttendees = Object.keys(studentMap).length;
+
+    // 3. Checked Out (Completed = Has BOTH check-in and check-out)
+    const checkedOutCount = Object.values(studentMap).filter(
+      types => types.has('check-in') && types.has('check-out')
+    ).length;
+
+    // 4. Present Now (Has check-in ONLY)
+    // Alternatively: Unique Attendees - Completed
+    const presentNowCount = uniqueAttendees - checkedOutCount;
+
+    return {
+      totalEntries,
+      uniqueAttendees,
+      checkedOutCount,
+      presentNowCount
+    };
+  }, [attendees]);
 
   const fetchAttendees = useCallback(async () => {
     setIsRefreshing(true);
@@ -96,7 +123,6 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
     }
   };
 
-  // --- TOGGLE EVENT STATUS ---
   const toggleEventStatus = async () => {
     const newStatus = event.status === 'active' ? 'completed' : 'active';
     try {
@@ -117,6 +143,7 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
   const copyQRLink = (type: 'checkin' | 'checkout') => {
     const baseUrl = window.location.origin;
     const typeParam = type === 'checkin' ? 'check-in' : 'check-out';
+    // Ensure this route matches your public page (e.g., /attend/[id])
     const attendeeLink = `${baseUrl}/attend/${event.id}?type=${typeParam}`;
     navigator.clipboard.writeText(attendeeLink);
     toast.success('Link copied!');
@@ -156,7 +183,7 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
         a.student_id, 
         `"${a.faculty}"`, 
         `"${a.program}"`, 
-        a.year_level, // Add this
+        a.year_level, 
         a.type,
         new Date(a.check_in_time).toLocaleString()
       ])
@@ -196,7 +223,6 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
               </div>
             </div>
             
-            {/* ACTIVATION BUTTON */}
             <div className="flex items-center gap-3">
               <Button
                 onClick={toggleEventStatus}
@@ -211,7 +237,7 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
           </div>
         </div>
 
-        {/* LIGHTER STATS CARDS */}
+        {/* UPDATED STATS CARDS */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <Card className="bg-white border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -219,19 +245,19 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
               <LogIn className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">{totalEntries}</div>
+              <div className="text-2xl font-bold text-gray-900">{stats.totalEntries}</div>
               <p className="text-xs text-gray-500">Check-ins + Check-outs</p>
             </CardContent>
           </Card>
           
           <Card className="bg-white border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-gray-600">Unique Check-ins</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-600">Unique Attendees</CardTitle>
               <Users className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">{uniqueCheckIns}</div>
-              <p className="text-xs text-gray-500">Unique attendees</p>
+              <div className="text-2xl font-bold text-gray-900">{stats.uniqueAttendees}</div>
+              <p className="text-xs text-gray-500">Unique individuals</p>
             </CardContent>
           </Card>
           
@@ -241,8 +267,8 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
               <LogOut className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">{uniqueCheckOuts}</div>
-              <p className="text-xs text-gray-500">Completed attendance</p>
+              <div className="text-2xl font-bold text-gray-900">{stats.checkedOutCount}</div>
+              <p className="text-xs text-gray-500">Completed event</p>
             </CardContent>
           </Card>
           
@@ -252,7 +278,7 @@ export default function EventDetails({ event, onBack, onUpdateEvent }: EventDeta
               <Clock className="h-4 w-4 text-gray-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">{currentlyPresent}</div>
+              <div className="text-2xl font-bold text-gray-900">{stats.presentNowCount}</div>
               <p className="text-xs text-gray-500">Active on site</p>
             </CardContent>
           </Card>

@@ -30,11 +30,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="overscroll-none scroll-smooth">
       <head>
       </head>
       <body
-        className={`${inter.className} antialiased min-h-screen bg-app-gradient`}
+        className={`${inter.className} antialiased min-h-screen bg-app-gradient overscroll-none`}
       >
         {/* 2. Loader Component */}
         <NextTopLoader

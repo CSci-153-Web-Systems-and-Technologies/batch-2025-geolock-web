@@ -83,7 +83,7 @@ export default function LandingPage() {
 
           {/* Buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-in fade-in slide-in-from-bottom-10 duration-700 delay-300">
-            <Link href="/auth/signup">
+            <Link href="/auth/sign-up">
               <Button size="lg" className="h-14 px-8 rounded-full bg-[#004eec] hover:bg-[#0040c4] text-white text-base shadow-xl shadow-blue-500/20 transition-all hover:scale-105 active:scale-95">
                 Create Organization Account
                 <ArrowRight className="ml-2 h-4 w-4" />
@@ -163,7 +163,7 @@ export default function LandingPage() {
             Streamline your organization&apos;s event management today.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/auth/signup">
+            <Link href="/auth/sign-up">
               <Button size="lg" className="h-14 px-10 rounded-full bg-gray-900 hover:bg-gray-800 text-white text-lg shadow-xl transition-all hover:scale-105">
                 Register Organization
               </Button>

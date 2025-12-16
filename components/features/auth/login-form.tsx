@@ -38,9 +38,11 @@ export function LoginForm() {
       setLoading(false);
       return;
     }
-
-    router.push("/dashboard");
-    router.refresh();
+    
+    // 🛑 FIX APPLIED HERE: Call router.refresh() before or immediately after router.push()
+    // This forces the server to re-read cookies and acknowledge the new session.
+    router.refresh(); 
+    router.push("/dashboard"); 
   };
 
   return (
