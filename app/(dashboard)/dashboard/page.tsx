@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Calendar, Users, BarChart3, TrendingUp, Clock, CheckCircle, UserCheck, Award, Loader2, MoreHorizontal } from "lucide-react";
+import { Calendar, Users, BarChart3, TrendingUp, Clock, CheckCircle, UserCheck, Award, Loader2, MoreHorizontal, X } from "lucide-react";
 import { StatCard } from "@/components/features/dashboard/stat-card";
 import { StatisticsChart } from "@/components/features/dashboard/statistics-chart";
 import { AttendeesBreakdown } from "@/components/features/dashboard/attendees-breakdown";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 
 // --- TYPES ---
 interface DashboardMetrics {
@@ -27,36 +28,39 @@ interface ActivityLog {
   event: { name: string } | null; 
 }
 
+// New Interface for Capacity Mapping
+interface EventCapacity {
+  name: string;
+  capacity: number;
+}
+
 interface ChartData {
   name: string;
   expected: number;
-  actual: number;
+  actual: number; 
 }
 
 interface BreakdownData {
   name: string;
   value: number;
   color: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any; 
 }
 
 const COLORS = ['#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE', '#2563EB'];
-// Define standard order for years to ensure they always appear
 const STANDARD_YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
 
 export default function DashboardPage() {
   const [supabase] = useState(() => createClient());
   const [loading, setLoading] = useState(true);
   
-  // Raw Data State
+  // Data State
   const [allAttendees, setAllAttendees] = useState<ActivityLog[]>([]);
-  const [metrics, setMetrics] = useState<DashboardMetrics>({
-    totalEvents: 0, activeEvents: 0, totalAttendees: 0, completionRate: "0%",
-  });
+  const [eventCapacities, setEventCapacities] = useState<EventCapacity[]>([]); // New State
+  const [metricsCounts, setMetricsCounts] = useState({ totalEvents: 0, activeEvents: 0 }); 
 
   // Filter State
   const [selectedYear, setSelectedYear] = useState<string>("All");
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   
   // --- DATA FETCHING ---
   useEffect(() => {
@@ -64,21 +68,25 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        // 1. Metrics Counts
+        // 1. Fetch Metrics Counts
         const { count: totalEvents } = await supabase.from('events').select('*', { count: 'exact', head: true });
         const { count: activeEvents } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('status', 'active');
-        const { count: totalCheckIns } = await supabase.from('attendees').select('*', { count: 'exact', head: true }).eq('type', 'check-in');
-        const { count: totalCheckOuts } = await supabase.from('attendees').select('*', { count: 'exact', head: true }).eq('type', 'check-out');
-        const rate = totalCheckIns && totalCheckOuts ? Math.round((totalCheckOuts / totalCheckIns) * 100) : 0;
-
-        setMetrics({
+        
+        setMetricsCounts({
           totalEvents: totalEvents || 0,
           activeEvents: activeEvents || 0,
-          totalAttendees: totalCheckIns || 0,
-          completionRate: `${rate}%`
         });
 
-        // 2. Fetch All Attendees (Detailed)
+        // 2. Fetch Event Capacities (Fix for Expected Calculation)
+        const { data: eventsData } = await supabase
+          .from('events')
+          .select('name, capacity');
+          
+        if (eventsData) {
+          setEventCapacities(eventsData as EventCapacity[]);
+        }
+
+        // 3. Fetch All Attendees
         const { data, error } = await supabase
           .from('attendees')
           .select('created_at, type, faculty, year_level, name, email, id, student_id, event:events(name)')
@@ -99,75 +107,148 @@ export default function DashboardPage() {
 
     fetchDashboardData();
 
-    const subscription = supabase
-      .channel('dashboard_realtime')
+    // Subscribe to both tables to keep stats in sync
+    const attendeeSub = supabase
+      .channel('dashboard_attendees')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attendees' }, () => fetchDashboardData())
       .subscribe();
 
+    const eventSub = supabase
+      .channel('dashboard_events')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => fetchDashboardData())
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(subscription);
+      supabase.removeChannel(attendeeSub);
+      supabase.removeChannel(eventSub);
     };
   }, [supabase]);
 
   // --- PROCESSED DATA (MEMOIZED) ---
-  const { chartData, breakdownData, totalUniqueCount, recentActivity, availableYears } = useMemo(() => {
+  const { 
+    metrics, 
+    chartData, 
+    breakdownData, 
+    totalUniqueCount, 
+    recentActivity, 
+    availableYears 
+  } = useMemo(() => {
     
-    // Calculate available years dynamically or use standard
+    // --- 1. METRICS CALCULATION ---
+    let metricsSource = allAttendees;
+    
+    if (selectedYear !== "All") {
+      metricsSource = metricsSource.filter(a => a.year_level === selectedYear);
+    }
+    
+    if (selectedEvent) {
+      metricsSource = metricsSource.filter(a => a.event?.name === selectedEvent);
+    }
+
+    const uniqueAttendees = new Set(metricsSource.map(a => a.email)); 
+
+    const completionMap = new Map<string, Set<string>>(); 
+    metricsSource.forEach(log => {
+      const eventName = log.event?.name || "Unknown";
+      const key = `${eventName}|${log.email}`;
+      if (!completionMap.has(key)) completionMap.set(key, new Set());
+      completionMap.get(key)!.add(log.type);
+    });
+
+    let completedCount = 0;
+    let totalParticipants = 0; 
+    completionMap.forEach((types) => {
+      totalParticipants++;
+      if (types.has('check-in') && types.has('check-out')) {
+        completedCount++;
+      }
+    });
+
+    const completionRate = totalParticipants > 0 
+      ? Math.round((completedCount / totalParticipants) * 100) 
+      : 0;
+
+    const calculatedMetrics: DashboardMetrics = {
+      totalEvents: metricsCounts.totalEvents,
+      activeEvents: metricsCounts.activeEvents,
+      totalAttendees: uniqueAttendees.size,
+      completionRate: `${completionRate}%`
+    };
+
+
+    // --- 2. CHART DATA (FIXED LOGIC) ---
+    // Expected: Comes from 'eventCapacities' (Static Capacity from DB)
+    // Actual: Comes from 'allAttendees' (Filtered Unique Count)
+    
+    const eventStats = new Map<string, { expected: number, actualSet: Set<string> }>();
+    
+    // Step A: Initialize all known events with their Capacity
+    // This ensures even empty events show up on the graph with 0 actuals.
+    eventCapacities.forEach(ec => {
+      if (ec.name) {
+        eventStats.set(ec.name, { 
+          expected: ec.capacity || 0, // USE CAPACITY HERE
+          actualSet: new Set() 
+        });
+      }
+    });
+
+    // Step B: Fill in Actuals based on current filters
+    const yearFiltered = selectedYear === "All" 
+      ? allAttendees 
+      : allAttendees.filter(a => a.year_level === selectedYear);
+
+    yearFiltered.forEach(log => {
+      const eventName = log.event?.name || "Unknown Event";
+      // Only count if the event exists in our capacity map (or add it dynamically if needed)
+      if (eventStats.has(eventName)) {
+         eventStats.get(eventName)!.actualSet.add(log.email);
+      } else {
+         // Fallback for events found in logs but missing in event list (rare)
+         eventStats.set(eventName, { expected: 0, actualSet: new Set([log.email]) });
+      }
+    });
+
+    const processedChartData: ChartData[] = Array.from(eventStats.entries()).map(([name, stats]) => ({
+      name, 
+      expected: stats.expected, 
+      actual: stats.actualSet.size 
+    }));
+
+
+    // --- 3. BREAKDOWN DATA ---
+    const currentCounts: Record<string, number> = {};
+    const uniqueBreakdownStudents = new Set<string>();
+
+    metricsSource.forEach(a => {
+        if (a.year_level) currentCounts[a.year_level] = (currentCounts[a.year_level] || 0) + 1;
+        uniqueBreakdownStudents.add(a.email);
+    });
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dynamicYears = Array.from(new Set(allAttendees.map((a: any) => a.year_level).filter(Boolean))).sort();
     const yearsToShow = dynamicYears.length > 0 ? dynamicYears : STANDARD_YEARS;
 
-    // 1. Filter Data based on selection
-    const filteredData = selectedYear === "All" 
-      ? allAttendees 
-      : allAttendees.filter(a => a.year_level === selectedYear);
-
-    // 2. Process Statistics Chart
-    const eventMap = new Map<string, { expected: number, actual: number }>();
-    filteredData.forEach(log => {
-      const eventName = log.event?.name || "Unknown Event";
-      if (!eventMap.has(eventName)) eventMap.set(eventName, { expected: 0, actual: 0 });
-      
-      const stats = eventMap.get(eventName)!;
-      stats.expected += 1; 
-      if (log.type === 'check-in') stats.actual += 1;
-    });
-
-    const processedChartData: ChartData[] = Array.from(eventMap.entries()).map(([name, stats]) => ({
-      name, expected: stats.expected, actual: stats.actual
-    }));
-
-    // 3. Process Attendees Breakdown (ENSURE ALL YEARS EXIST)
-    // First, count the filtered data
-    const currentCounts: Record<string, number> = {};
-    filteredData.forEach(a => {
-        if (a.year_level) currentCounts[a.year_level] = (currentCounts[a.year_level] || 0) + 1;
-    });
-
-    // Map through ALL available years. If a year isn't in 'currentCounts' (because it was filtered out),
-    // it gets value 0 but still appears in the list.
     const processedBreakdown: BreakdownData[] = yearsToShow.map((year, index) => ({
       name: year,
-      value: currentCounts[year] || 0, // Returns 0 if filtered out
+      value: currentCounts[year] || 0,
       color: COLORS[index % COLORS.length]
     }));
 
-    // Calculate total unique for the circle (Global or Filtered? Filtered makes sense for the view)
-    const uniqueStudentIds = new Set<string>();
-    filteredData.forEach(a => uniqueStudentIds.add(a.email));
 
-    // 4. Recent Activity
+    // --- 4. RECENT ACTIVITY ---
     const processedRecent = allAttendees.slice(0, 20); 
 
     return {
+        metrics: calculatedMetrics,
         chartData: processedChartData,
         breakdownData: processedBreakdown,
-        totalUniqueCount: uniqueStudentIds.size,
+        totalUniqueCount: uniqueBreakdownStudents.size, 
         recentActivity: processedRecent,
         availableYears: yearsToShow
     };
 
-  }, [allAttendees, selectedYear]);
+  }, [allAttendees, eventCapacities, metricsCounts, selectedYear, selectedEvent]);
 
   const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
 
@@ -185,26 +266,56 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard title="Total Events" value={metrics.totalEvents.toString()} subtitle="All time events" icon={Calendar} subtitleIcon={Clock} iconBgColor="bg-blue-100" iconColor="text-blue-600" />
         <StatCard title="Active Events" value={metrics.activeEvents.toString()} subtitle="Currently Running" icon={TrendingUp} subtitleIcon={CheckCircle} iconBgColor="bg-green-100" iconColor="text-green-600" />
-        <StatCard title="Total Attendees" value={metrics.totalAttendees.toString()} subtitle="Total Check-ins" icon={Users} subtitleIcon={UserCheck} iconBgColor="bg-orange-100" iconColor="text-orange-600" />
-        <StatCard title="Completion Rate" value={metrics.completionRate} subtitle="Check-out Rate" icon={BarChart3} subtitleIcon={Award} iconBgColor="bg-yellow-100" iconColor="text-yellow-600" />
+        <StatCard 
+          title="Total Attendees" 
+          value={metrics.totalAttendees.toString()} 
+          subtitle={selectedYear !== "All" ? `${selectedYear} Participants` : (selectedEvent ? "For selected event" : "Unique Participants")} 
+          icon={Users} 
+          subtitleIcon={UserCheck} 
+          iconBgColor="bg-orange-100" 
+          iconColor="text-orange-600" 
+        />
+        <StatCard 
+          title="Completion Rate" 
+          value={metrics.completionRate} 
+          subtitle={selectedYear !== "All" ? `For ${selectedYear}` : "Check-in & Out"} 
+          icon={BarChart3} 
+          subtitleIcon={Award} 
+          iconBgColor="bg-yellow-100" 
+          iconColor="text-yellow-600" 
+        />
       </div>
 
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 relative">
+          {selectedEvent && (
+            <div className="absolute top-4 left-4 z-10 animate-in fade-in zoom-in duration-300">
+               <Button 
+                variant="secondary" 
+                size="sm" 
+                onClick={() => setSelectedEvent(null)}
+                className="text-xs h-7 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200"
+               >
+                 Filtering: {selectedEvent} <X className="w-3 h-3 ml-1" />
+               </Button>
+            </div>
+          )}
           <StatisticsChart 
             data={chartData} 
             years={availableYears} 
             selectedYear={selectedYear}
             onYearChange={setSelectedYear}
+            selectedEvent={selectedEvent}
+            onBarClick={(eventName: string) => setSelectedEvent(eventName === selectedEvent ? null : eventName)}
           /> 
         </div>
         <div>
-          {/* Pass selectedYear so it knows which to highlight */}
           <AttendeesBreakdown 
              data={breakdownData} 
              totalUnique={totalUniqueCount} 
              selectedYear={selectedYear}
+             title={selectedEvent ? "Event Attendees" : "Total Attendees"}
           />
         </div>
       </div>
