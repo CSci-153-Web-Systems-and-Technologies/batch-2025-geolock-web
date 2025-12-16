@@ -28,7 +28,6 @@ interface ActivityLog {
   event: { name: string } | null; 
 }
 
-// New Interface for Capacity Mapping
 interface EventCapacity {
   name: string;
   capacity: number;
@@ -55,7 +54,7 @@ export default function DashboardPage() {
   
   // Data State
   const [allAttendees, setAllAttendees] = useState<ActivityLog[]>([]);
-  const [eventCapacities, setEventCapacities] = useState<EventCapacity[]>([]); // New State
+  const [eventCapacities, setEventCapacities] = useState<EventCapacity[]>([]); 
   const [metricsCounts, setMetricsCounts] = useState({ totalEvents: 0, activeEvents: 0 }); 
 
   // Filter State
@@ -68,34 +67,58 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        // 1. Fetch Metrics Counts
-        const { count: totalEvents } = await supabase.from('events').select('*', { count: 'exact', head: true });
-        const { count: activeEvents } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('status', 'active');
+        // 1. Get Current User (Organization)
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (!user) {
+            console.error("No user found");
+            return;
+        }
+
+        // 2. Fetch Metrics Counts (Restricted to My Org)
+        const { count: totalEvents } = await supabase
+            .from('events')
+            .select('*', { count: 'exact', head: true })
+            .eq('organization_id', user.id); // <--- FILTER ADDED
+
+        const { count: activeEvents } = await supabase
+            .from('events')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'active')
+            .eq('organization_id', user.id); // <--- FILTER ADDED
         
         setMetricsCounts({
           totalEvents: totalEvents || 0,
           activeEvents: activeEvents || 0,
         });
 
-        // 2. Fetch Event Capacities (Fix for Expected Calculation)
+        // 3. Fetch Event Capacities (Restricted to My Org)
         const { data: eventsData } = await supabase
           .from('events')
-          .select('name, capacity');
+          .select('name, capacity')
+          .eq('organization_id', user.id); // <--- FILTER ADDED
           
         if (eventsData) {
           setEventCapacities(eventsData as EventCapacity[]);
         }
 
-        // 3. Fetch All Attendees
+        // 4. Fetch All Attendees (RLS handles this, but explicit join helps context)
+        // We fetch attendees where the *event* belongs to *me*.
+        // Since we fixed the RLS, 'select * from attendees' works, but this is explicit.
         const { data, error } = await supabase
           .from('attendees')
-          .select('created_at, type, faculty, year_level, name, email, id, student_id, event:events(name)')
+          .select('created_at, type, faculty, year_level, name, email, id, student_id, event:events!inner(name, organization_id)') // !inner enforces the join filter if we added one
+          .eq('event.organization_id', user.id) // Optional double-check
           .order('created_at', { ascending: false });
 
         if (error) console.error("Supabase Error:", error);
         
         if (data) {
-          setAllAttendees(data as unknown as ActivityLog[]);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setAllAttendees(data.map((d: any) => ({
+             ...d,
+             event: { name: d.event?.name }
+          })) as ActivityLog[]);
         }
 
       } catch (error) {
@@ -107,7 +130,7 @@ export default function DashboardPage() {
 
     fetchDashboardData();
 
-    // Subscribe to both tables to keep stats in sync
+    // Subscribe to changes
     const attendeeSub = supabase
       .channel('dashboard_attendees')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attendees' }, () => fetchDashboardData())
@@ -183,7 +206,6 @@ export default function DashboardPage() {
     const eventStats = new Map<string, { expected: number, actualSet: Set<string> }>();
     
     // Step A: Initialize all known events with their Capacity
-    // This ensures even empty events show up on the graph with 0 actuals.
     eventCapacities.forEach(ec => {
       if (ec.name) {
         eventStats.set(ec.name, { 
