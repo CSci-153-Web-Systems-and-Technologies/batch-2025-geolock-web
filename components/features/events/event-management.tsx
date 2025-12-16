@@ -33,7 +33,7 @@ interface Event {
 
 interface EventCardProps {
   event: Event;
-  isExporting: boolean; // <--- Added Prop
+  isExporting: boolean;
   onViewDetails: (eventId: string | number) => void;
   onExport: (eventId: string | number) => void;
 }
@@ -133,7 +133,6 @@ const EventCard: React.FC<EventCardProps> = ({ event, isExporting, onViewDetails
             </button>
           </div>
           
-          {/* EXPORT BUTTON UPDATED HERE 👇 */}
           <button
             onClick={(e) => { e.stopPropagation(); onExport(event.id); }}
             disabled={isExporting}
@@ -162,9 +161,20 @@ export default function EventManagement({ onOpenCreateModal }: EventManagementPr
   useEffect(() => {
     async function fetchEvents() {
       try {
+        // 1. Get the current logged-in user
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (!user) {
+          console.error("No user found");
+          return;
+        }
+
+        // 2. Fetch events using organization_id (which matches the user ID)
         const { data, error } = await supabase
           .from('events')
           .select('*, attendees(email)')
+          // --- FILTER BY ORGANIZATION_ID ---
+          .eq('organization_id', user.id) 
           .order('date', { ascending: true });
 
         if (error) throw error;
@@ -202,7 +212,7 @@ export default function EventManagement({ onOpenCreateModal }: EventManagementPr
 
   const handleExport = async (eventId: string | number) => {
     try {
-      setExporting(eventId); // State is now tracked
+      setExporting(eventId);
       
       const { data, error } = await supabase
         .from('attendees')
@@ -300,7 +310,6 @@ export default function EventManagement({ onOpenCreateModal }: EventManagementPr
               <EventCard
                 key={event.id}
                 event={event}
-                // PASSING THE STATE HERE 👇
                 isExporting={exporting === event.id}
                 onViewDetails={handleNavigateToDetails}
                 onExport={handleExport}
